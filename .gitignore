@@ -1,0 +1,41 @@
+node_modules/
+.expo/
+dist/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+.env.local
+.env*.local
+
+# Expo
+expo-env.d.ts
+.expo-shared/
+
+# Metro
+.metro-health-check*
+
+# macOS
+.DS_Store
+*.pem
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo

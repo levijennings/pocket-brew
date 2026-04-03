@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Pocket Brew",
+    "slug": "pocket-brew",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F0F14"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dvlmnt.pocketbrew"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F0F14"
+      },
+      "package": "com.dvlmnt.pocketbrew"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
