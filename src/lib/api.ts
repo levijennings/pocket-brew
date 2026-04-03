@@ -651,7 +651,7 @@ export async function unifiedSearch(query: string): Promise<UnifiedSearchResult>
     }
 
     const [beersResult, breweriesResult, stylesResult] = await Promise.all([
-      searchBeers(trimmedQuery, { limit: 10 }),
+      searchBeers(trimmedQuery, { limit: 10, offset: 0, sort: 'popularity' }),
       supabase
         .from('breweries')
         .select('*')
