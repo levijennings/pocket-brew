@@ -1,33 +1,33 @@
-name: EAS Build & Deploy Pocket Brew
+name: EAS Build
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
+    branches: [ main, develop ]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
   workflow_dispatch:
     inputs:
       profile:
         description: 'Build profile'
         required: true
-        default: 'preview'
         type: choice
         options:
+          - development
           - preview
           - production
 
-env:
-  EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-  EAS_PROJECT_ID: ${{ secrets.EAS_PROJECT_ID }}
+permissions:
+  contents: read
+  deployments: write
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
-    name: Test
+    strategy:
+      matrix:
+        platform: [ ios, android ]
+    environment: eas-build
 
     steps:
       - name: Checkout code
@@ -36,262 +36,108 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20.x'
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run linter
-        run: npm run lint
-        continue-on-error: true
-
-      - name: Run type check
-        run: npm run type-check
-        continue-on-error: true
-
-      - name: Run tests
-        run: npm run test
-        continue-on-error: true
-
-  build-preview:
-    runs-on: ubuntu-latest
-    name: Build Preview (iOS & Android)
-    needs: test
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'preview')
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Setup EAS CLI
+      - name: Setup EAS
         uses: expo/expo-github-action@v8
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Create .env.production
+      - name: Determine build profile
+        id: profile
         run: |
-          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL_PB }}" >> .env.production
-          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY_PB }}" >> .env.production
-          echo "EXPO_PUBLIC_EXPO_PROJECT_ID=${{ secrets.EAS_PROJECT_ID }}" >> .env.production
-          echo "EXPO_PUBLIC_API_URL=https://api.pocketbrew.app" >> .env.production
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            PROFILE="${{ github.event.inputs.profile }}"
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            PROFILE="production"
+          else
+            PROFILE="preview"
+          fi
+          echo "profile=$PROFILE" >> $GITHUB_OUTPUT
 
-      - name: Build preview for iOS
-        run: eas build --platform ios --profile preview --wait
-
-      - name: Build preview for Android
-        run: eas build --platform android --profile preview --wait
-
-  build-production:
-    runs-on: ubuntu-latest
-    name: Build Production (iOS & Android)
-    needs: test
-    if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'production') ||
-      startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Setup EAS CLI
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Create .env.production
+      - name: Bump version (production only)
+        if: steps.profile.outputs.profile == 'production'
         run: |
-          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL_PB }}" >> .env.production
-          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY_PB }}" >> .env.production
-          echo "EXPO_PUBLIC_EXPO_PROJECT_ID=${{ secrets.EAS_PROJECT_ID }}" >> .env.production
-          echo "EXPO_PUBLIC_API_URL=https://api.pocketbrew.app" >> .env.production
+          npm install -g semver
+          CURRENT_VERSION=$(jq -r '.version' app.json)
+          NEW_VERSION=$(semver bump patch $CURRENT_VERSION)
+          jq --arg version "$NEW_VERSION" '.version = $version' app.json > app.json.tmp && mv app.json.tmp app.json
+          git config user.email "ci@example.com"
+          git config user.name "CI Bot"
+          git add app.json
+          git commit -m "Bump version to $NEW_VERSION"
 
-      - name: Build production for iOS
-        run: eas build --platform ios --profile production --wait
-
-      - name: Build production for Android
-        run: eas build --platform android --profile production --wait
-
-  submit-testflight:
-    runs-on: ubuntu-latest
-    name: Submit to TestFlight
-    needs: build-production
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Setup EAS CLI
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Create .env.production
+      - name: Build for iOS
+        if: matrix.platform == 'ios'
         run: |
-          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL_PB }}" >> .env.production
-          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY_PB }}" >> .env.production
-          echo "EXPO_PUBLIC_EXPO_PROJECT_ID=${{ secrets.EAS_PROJECT_ID }}" >> .env.production
-          echo "EXPO_PUBLIC_API_URL=https://api.pocketbrew.app" >> .env.production
+          eas build --platform ios --profile ${{ steps.profile.outputs.profile }} --non-interactive
+        env:
+          EAS_BUILD_PROFILE: ${{ steps.profile.outputs.profile }}
 
-      - name: Setup App Store credentials
+      - name: Build for Android
+        if: matrix.platform == 'android'
+        run: |
+          eas build --platform android --profile ${{ steps.profile.outputs.profile }} --non-interactive
+        env:
+          EAS_BUILD_PROFILE: ${{ steps.profile.outputs.profile }}
+
+      - name: Upload to TestFlight (iOS production)
+        if: matrix.platform == 'ios' && steps.profile.outputs.profile == 'production'
+        run: |
+          eas submit --platform ios --non-interactive --wait
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - name: Submit iOS build to TestFlight
-        run: eas submit --platform ios --latest --wait
-
-  submit-play-console:
-    runs-on: ubuntu-latest
-    name: Submit to Google Play Console
-    needs: build-production
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Setup EAS CLI
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Create .env.production
+      - name: Upload to Play Console (Android production)
+        if: matrix.platform == 'android' && steps.profile.outputs.profile == 'production'
         run: |
-          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL_PB }}" >> .env.production
-          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY_PB }}" >> .env.production
-          echo "EXPO_PUBLIC_EXPO_PROJECT_ID=${{ secrets.EAS_PROJECT_ID }}" >> .env.production
-          echo "EXPO_PUBLIC_API_URL=https://api.pocketbrew.app" >> .env.production
-
-      - name: Setup Google Play credentials
-        run: |
-          mkdir -p ~/.android
-          echo "${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}" > ~/.android/service-account.json
-
-      - name: Submit Android build to Play Console
-        run: eas submit --platform android --latest --wait --track internal
-
-  notify:
-    runs-on: ubuntu-latest
-    name: Notify Slack
-    needs: [build-preview, build-production]
-    if: always()
-
-    steps:
-      - name: Determine build status
-        id: status
-        run: |
-          if [[ "${{ needs.build-preview.result }}" == "success" ]] || [[ "${{ needs.build-production.result }}" == "success" ]]; then
-            echo "status=success" >> $GITHUB_OUTPUT
-          else
-            echo "status=failure" >> $GITHUB_OUTPUT
-          fi
+          eas submit --platform android --non-interactive --wait
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
       - name: Notify Slack on success
-        if: steps.status.outputs.status == 'success'
+        if: success()
         uses: slackapi/slack-github-action@v1.24.0
         with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           payload: |
             {
-              "channel": "#C0AQG7RJ6LT",
-              "text": "✅ Pocket Brew build successful",
+              "text": "EAS build completed successfully",
               "blocks": [
                 {
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Pocket Brew - EAS Build* ✅\n*Branch:* ${{ github.ref }}\n*Author:* ${{ github.actor }}\n*Status:* Build successful - see logs"
+                    "text": "*EAS Build Successful*\nPlatform: ${{ matrix.platform }}\nProfile: ${{ steps.profile.outputs.profile }}\nCommit: <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>"
                   }
-                },
-                {
-                  "type": "actions",
-                  "elements": [
-                    {
-                      "type": "button",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "View Build"
-                      },
-                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                    }
-                  ]
                 }
               ]
             }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_BUILDS }}
 
       - name: Notify Slack on failure
-        if: steps.status.outputs.status == 'failure'
+        if: failure()
         uses: slackapi/slack-github-action@v1.24.0
         with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           payload: |
             {
-              "channel": "#C0AQG7RJ6LT",
-              "text": "❌ Pocket Brew build failed",
+              "text": "EAS build failed",
               "blocks": [
                 {
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Pocket Brew - EAS Build Failed* ❌\n*Branch:* ${{ github.ref }}\n*Author:* ${{ github.actor }}\n*Status:* Build failed - see logs"
+                    "text": "*EAS Build Failed*\nPlatform: ${{ matrix.platform }}\nProfile: ${{ steps.profile.outputs.profile }}\nCheck <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|workflow logs>"
                   }
-                },
-                {
-                  "type": "actions",
-                  "elements": [
-                    {
-                      "type": "button",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "View Logs"
-                      },
-                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                    }
-                  ]
                 }
               ]
             }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_BUILDS }}
